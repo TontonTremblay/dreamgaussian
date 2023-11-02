@@ -636,6 +636,9 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
 
     P[0, 0] = 1 / tanHalfFovX
     P[1, 1] = 1 / tanHalfFovY
+    # print(P[1, 1])
+    # print(P[0, 0])
+    # raise()
     P[3, 2] = z_sign
     P[2, 2] = z_sign * zfar / (zfar - znear)
     P[2, 3] = -(zfar * znear) / (zfar - znear)
@@ -656,8 +659,10 @@ class MiniCam:
         w2c = np.linalg.inv(c2w)
 
         # rectify...
+        # no this is a change in coordinate system from opengl to opencv this is gross.
         w2c[1:3, :3] *= -1
         w2c[:3, 3] *= -1
+        # print(w2c)
 
         self.world_view_transform = torch.tensor(w2c).transpose(0, 1).cuda()
         self.projection_matrix = (

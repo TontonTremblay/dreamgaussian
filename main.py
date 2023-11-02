@@ -15,6 +15,8 @@ from gs_renderer import Renderer, MiniCam
 
 from grid_put import mipmap_linear_grid_put_2d
 from mesh import Mesh, safe_normalize
+from icecream import ic
+print = ic 
 
 class GUI:
     def __init__(self, opt):
@@ -113,6 +115,7 @@ class GUI:
 
         # default camera
         pose = orbit_camera(self.opt.elevation, 0, self.opt.radius)
+        print(pose)
         self.fixed_cam = MiniCam(
             pose,
             self.opt.ref_size,
@@ -237,7 +240,6 @@ class GUI:
 
             images = torch.cat(images, dim=0)
             poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)
-
             # import kiui
             # print(hor, ver)
             # kiui.vis.plot_image(images)
@@ -303,7 +305,6 @@ class GUI:
         # should update image
         if self.need_update:
             # render image
-
             cur_cam = MiniCam(
                 self.cam.pose,
                 self.W,
@@ -368,10 +369,8 @@ class GUI:
             if self.bg_remover is None:
                 self.bg_remover = rembg.new_session()
             img = rembg.remove(img, session=self.bg_remover)
-
         img = cv2.resize(img, (self.W, self.H), interpolation=cv2.INTER_AREA)
         img = img.astype(np.float32) / 255.0
-
         self.input_mask = img[..., 3:]
         # white bg
         self.input_img = img[..., :3] * self.input_mask + (1 - self.input_mask)
@@ -379,11 +378,13 @@ class GUI:
         self.input_img = self.input_img[..., ::-1].copy()
 
         # load prompt
-        file_prompt = file.replace("_rgba.png", "_caption.txt")
-        if os.path.exists(file_prompt):
-            print(f'[INFO] load prompt from {file_prompt}...')
-            with open(file_prompt, "r") as f:
-                self.prompt = f.read().strip()
+        if '_rgba' in file:
+            file_prompt = file.replace("_rgba.png", "_caption.txt")
+
+            if os.path.exists(file_prompt):
+                print(f'[INFO] load prompt from {file_prompt}...')
+                with open(file_prompt, "r") as f:
+                    self.prompt = f.read().strip()
 
     @torch.no_grad()
     def save_model(self, mode='geo', texture_size=1024):
@@ -439,11 +440,12 @@ class GUI:
 
                 rgbs = cur_out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
 
+                # import kiui
+                # kiui.vis.plot_image(rgbs)
+
                 # enhance texture quality with zero123 [not working well]
                 # if self.opt.guidance_model == 'zero123':
                 #     rgbs = self.guidance.refine(rgbs, [ver], [hor], [0])
-                    # import kiui
-                    # kiui.vis.plot_image(rgbs)
                     
                 # get coordinate in texture image
                 pose = torch.from_numpy(pose.astype(np.float32)).to(self.device)
@@ -472,13 +474,13 @@ class GUI:
                 mask = mask.view(-1)
 
                 uvs = uvs.view(-1, 2).clamp(0, 1)[mask]
-                rgbs = rgbs.view(3, -1).permute(1, 0)[mask].contiguous()
+                rgbs2 = rgbs.view(3, -1).permute(1, 0)[mask].contiguous()
                 
                 # update texture image
                 cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(
                     h, w,
                     uvs[..., [1, 0]] * 2 - 1,
-                    rgbs,
+                    rgbs2,
                     min_resolution=256,
                     return_count=True,
                 )
@@ -488,6 +490,8 @@ class GUI:
                 mask = cnt.squeeze(-1) < 0.1
                 albedo[mask] += cur_albedo[mask]
                 cnt[mask] += cur_cnt[mask]
+            # import kiui
+            # kiui.vis.plot_image(rgbs)
 
             mask = cnt.squeeze(-1) > 0
             albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)

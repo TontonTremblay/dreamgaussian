@@ -16,6 +16,8 @@ from mesh_renderer import Renderer
 
 # from kiui.lpips import LPIPS
 
+from icecream import ic 
+
 class GUI:
     def __init__(self, opt):
         self.opt = opt  # shared with the trainer's opt to support in-place modification of rendering parameters.
@@ -105,6 +107,7 @@ class GUI:
         pose = orbit_camera(self.opt.elevation, 0, self.opt.radius)
         self.fixed_cam = (pose, self.cam.perspective)
         
+        ic(self.fixed_cam)
 
         self.enable_sd = self.opt.lambda_sd > 0 and self.prompt != ""
         self.enable_zero123 = self.opt.lambda_zero123 > 0 and self.input_img is not None
@@ -151,7 +154,7 @@ class GUI:
         ender = torch.cuda.Event(enable_timing=True)
         starter.record()
 
-
+        # training here
         for _ in range(self.train_steps):
 
             self.step += 1
@@ -333,16 +336,17 @@ class GUI:
         self.input_img = self.input_img[..., ::-1].copy()
 
         # load prompt
-        file_prompt = file.replace("_rgba.png", "_caption.txt")
-        if os.path.exists(file_prompt):
-            print(f'[INFO] load prompt from {file_prompt}...')
-            with open(file_prompt, "r") as f:
-                self.prompt = f.read().strip()
+        if "_rgba" in file:
+            file_prompt = file.replace("_rgba.png", "_caption.txt")
+            if os.path.exists(file_prompt):
+                print(f'[INFO] load prompt from {file_prompt}...')
+                with open(file_prompt, "r") as f:
+                    self.prompt = f.read().strip()
     
     def save_model(self):
         os.makedirs(self.opt.outdir, exist_ok=True)
     
-        path = os.path.join(self.opt.outdir, self.opt.save_path + '.' + self.opt.mesh_format)
+        path = os.path.join(self.opt.outdir, self.opt.save_path + '_mesh.' + self.opt.mesh_format)
         self.renderer.export_mesh(path)
 
         print(f"[INFO] save model to {path}.")
@@ -691,3 +695,57 @@ if __name__ == "__main__":
         gui.render()
     else:
         gui.train(opt.iters_refine)
+
+    # render the data
+    import json 
+    def new_pose(cam1,new1,cam2):
+        # Calculate the relative transformation between cam2 and cam1
+        relative_transformation = np.linalg.inv(cam1) @ cam2
+
+        # Extract the translation part of new1
+        translation_part_new1 = new1[:3, 3]
+        translation_part_new1 = [0,0,0]
+        # Modify the relative transformation to keep the same translation as new1
+        relative_transformation[:3, 3] = translation_part_new1
+
+        # Calculate new2 by applying the modified relative transformation to new1
+        new2 = relative_transformation @ new1
+        return new2
+
+    # initial camera pose 
+    path_json = "/".join(gui.opt.input.split("/")[:-1])+"/input_cam.json"
+    with open(path_json, 'r') as file:
+        data = json.load(file)
+
+    cam1 = np.array(data['frames'][0]['transform_matrix'])
+    new1 = np.array([
+        [1., 0., 0., 0.],
+        [0., 1., 0., 0.],
+        [0., 0., 1., 2.],
+        [0., 0., 0., 1.]
+    ])
+
+
+
+    # render camera poses 
+    path_json = "/".join(gui.opt.input.split("/")[:-1])+"/eval_cam.json"
+    with open(path_json, 'r') as file:
+        data = json.load(file)
+
+    for i_frame, frame in enumerate(data['frames']):
+        cam2 = np.array(frame['transform_matrix'])
+        new2 = new_pose(cam1,new1,cam2)
+
+        # ssaa = min(2.0, max(0.125, 2 * np.random.random()))
+        out = gui.renderer.render(new2,gui.fixed_cam[1], 800, 800)
+        image = out["image"] # [H, W, 3] in [0, 1]
+        image = image.permute(2,0,1).contiguous()*255 # [1, 3, H, W] in [0, 1]
+        image_np = image.detach().cpu().numpy().astype(np.uint8)
+        image_np = np.transpose(image_np, (1, 2, 0))
+        import kiui
+        # print(hor, ver)
+        # kiui.vis.plot_image(image)
+        # ic(image.shape,image.min(),image.max())
+        ic(f'{gui.opt.save_path}/{frame["file_path"]}.png')
+        kiui.write_image(f'logs/{gui.opt.save_path}/{frame["file_path"]}.png',image_np)
+
